@@ -1,0 +1,30 @@
+version: '2.6'
+services:
+  boxer:
+    image: boxer-staging
+    build: .
+    restart: always
+    ports: 
+      - 8081:8081
+    environment:
+      DB_HOST: db
+      DB_USER: vivien.bartis
+      DB_PASS: boxer
+      DB_DATABASE: box
+  db:
+    image: mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: boxer
+      MYSQL_USER: vivien.bartis
+      MYSQL_PASSWORD: boxer
+      MYSQL_DATABASE: box
+    volumes: 
+      -  ./box.sql:/docker-entrypoint-initdb.d/box.sql:ro 
+    ports:
+      - 3306:3306
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080

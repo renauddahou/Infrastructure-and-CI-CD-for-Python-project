@@ -1,0 +1,5 @@
+db_password = "boxeris8"
+db_username = "vivienbartis"
+db_name = "box"
+image_name = "registry.gitlab.com/3pg-devops-internship/boxer:staging"
+# image_name = "registry.gitlab.com/3pg-devops-internship/boxer:production"

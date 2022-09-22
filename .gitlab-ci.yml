@@ -1,0 +1,146 @@
+stages:
+    - build
+    - test
+    - promote
+    - deploy
+
+default:
+  image: docker:20.10.17 
+ 
+
+build:
+  stage: build
+  services:
+    - docker:20.10.17-dind
+  rules: 
+    - if: $CI_PIPELINE_SOURCE	== "push"    
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY 
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH || true
+    - cd boxer && docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH
+  
+
+test:
+  stage: test 
+  image: $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH
+  services:
+    - mysql
+  variables:
+    MYSQL_DATABASE: box
+    MYSQL_ROOT_PASSWORD: boxer
+    DB_DATABASE: box
+    DB_PASS: boxer 
+    DB_USER: root
+    DB_HOST: mysql
+  rules: 
+    - if: $CI_PIPELINE_SOURCE	== "push"    
+  before_script: 
+    - apt update && apt install default-mysql-client -y
+    - mysql -h $DB_HOST -u $DB_USER -p$DB_PASS -D $DB_DATABASE < ./boxer/box.sql
+    - pip3 install pytest
+  script:
+    - pytest --verbosity=10 --junit-xml=test_result.xml --log-level=INFO
+  artifacts:
+    reports:
+      junit: test_result.xml
+
+
+.promote: &promote
+  stage: promote
+  services:
+    - docker:20.10.17-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY 
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH $CI_REGISTRY_IMAGE:$promote_tag
+    - docker push $CI_REGISTRY_IMAGE:$promote_tag
+
+promote_main:
+  <<: *promote
+  variables:
+    promote_tag: 'production'
+  rules: 
+   - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "main"
+  
+promote_dev:
+  <<: *promote
+  variables:
+    promote_tag: 'staging'
+  rules: 
+   - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "dev"
+   - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "db_init"
+
+.deploy: &deploy
+  stage: deploy
+  services:
+    - docker:20.10.17-dind
+  variables: 
+    TF_VAR_image_name : $CI_REGISTRY_IMAGE:$CI_ENVIRONMENT_NAME 
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - apk add --no-cache curl python3 py3-pip && pip3 install --upgrade pip && pip3 install --no-cache-dir awscli
+    - | 
+      release=$(curl -s https://api.github.com/repos/hashicorp/terraform/releases/latest | grep tag_name | cut -d: -f2 | tr -d \"\,\v | awk '{$1=$1};1')
+      curl -o terraform_${release}_linux_amd64.zip https://releases.hashicorp.com/terraform/${release}/terraform_${release}_linux_amd64.zip
+      unzip terraform_${release}_linux_amd64.zip
+      mv terraform /usr/bin/terraform
+    - apk add mysql-client
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 090413896689.dkr.ecr.us-east-1.amazonaws.com
+  script: 
+    - cd infrastructure
+    - terraform init
+    - terraform workspace select $CI_ENVIRONMENT_NAME
+    - terraform apply -input=false -auto-approve
+
+deploy_staging:
+  <<: *deploy
+  environment: 
+    name: staging
+  rules:
+   - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "dev"
+   - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "db_init"
+
+
+deploy_production:
+  <<: *deploy
+  environment:
+    name: production
+  rules:
+   - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "main"
+
+
+.stopdeploy: &stopdeploy
+  stage: deploy
+  image: 
+    name: hashicorp/terraform
+    entrypoint: [""]
+  variables: 
+    TF_VAR_image_name : $CI_REGISTRY_IMAGE:$CI_ENVIRONMENT_NAME 
+  script:
+    - cd infrastructure
+    - terraform init
+    - terraform workspace select $CI_ENVIRONMENT_NAME
+    - terraform destroy -input=false -auto-approve
+  environment:
+    action: stop
+  when: manual
+
+stopdeploy_staging:
+  <<: *stopdeploy
+  environment:
+    name: staging
+  rules:
+    - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "dev"
+    - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "db_init"
+
+
+stopdeploy_production: 
+  <<: *stopdeploy
+  environment:
+    name: production
+  rules:
+    - if: $CI_PIPELINE_SOURCE	== "push" && $CI_COMMIT_BRANCH	== "main"  
+

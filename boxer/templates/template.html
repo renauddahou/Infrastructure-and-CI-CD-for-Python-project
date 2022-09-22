@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <link rel="stylesheet" href="{{ url_for('static', filename= 'css/style.css') }}">
+        <title>Boxer App</title>
+    </head>
+    <body>
+    <form action="/update">
+    <h1>Welcome to the Boxer app</h1>
+    <div class="box-with-button">
+        <label>{{Label}}</label>
+    <button>Submit</button>
+    </div>
+    </form>
+    </body>
+</html>
